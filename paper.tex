@@ -14,7 +14,7 @@
 \setlength{\pdfpageheight}{\paperheight}
 \setlength{\pdfpagewidth}{\paperwidth}
 
-\title{Conex - establishing trust into repositories}
+\title{Conex - establishing trust into data repositories}
 
 \authorinfo{Hannes Mehnert\thanks{Funded by EPSRC Programme Grant EP/K008528/1}}{University of Cambridge}{}
 \authorinfo{Louis Gesbert}{OCamlPro}{}
@@ -24,52 +24,59 @@
 \maketitle
 
 \begin{abstract}
-  Software update systems, such as opam, should verify that packages and metadata thereof are authenticated.
-  Opam does not include any mechanism to verify authenticity at the moment.
-  We propose \emph{conex}, which uses end-to-end digital signatures from the package author to the user.
-  Conex is implemented in OCaml and can be integrated into opam to build a security story where even the central repository server does not need to be trusted.
-  Authors and users will not need to change their workflow, whereas janitors (repository maintainers) will have to adjust their workflow.
+  Opam is a software update systems, responsible for discovering, downloading, building, and installing packages.
+  The data and metadata at each step should be authenticated to originate from a (transitively) trusted author.
+  Opam does not include any mechanism to authenticate any step at the moment.
+  We propose \emph{conex}, which establishes end-to-end digital signatures from the package author to the user.
+  Using conex, neither the distribution server nor the transport layer need to be trusted.
+  Authors and users need to adapt their workflow only slightly (or use opam-publish), whereas janitors (repository maintainers) need to use more sophisticated tools.
 \end{abstract}
 
 \section{Introduction}
-Software update systems, such as opam, need to discover, download, and install packages.
-Crucial to all steps is that the received data is authenticated before being used to prevent attacks injecting backdoors.
-A software update system relies on a central server which provides a repository (source code and metadata such as dependencies and build recipe) of all packages.
-When a new package is released, the repository is updated.
-The central server is an online services and a single point of failures, and recently these servers been attacked \cite{adobe,apache2,apache1,opera,kernel,cabal,kernelorg,debian,freebsd,php3,savannah,maven,savannah2,npm,php,phpmyadmin,php2,github,ocamlforge,redhatssh,gentoo,rubygems,fedora,wordpress} to distribute malware.
+Opam is a software update systems, and needs to discover, download, build, and install packages.
+To prevent injection of malware, all steps need to authenticate the received data before processing it.
+A software update system relies on a central server which distributes a repository (source code and metadata such as dependencies and build recipe) of all packages.
+When a new package is released, it is inserted into the repository and distributed to all clients by the central server.
+The central server is an online service and a single point of failure, and recently these central servers have been attacked \cite{adobe,apache2,apache1,opera,kernel,cabal,kernelorg,debian,freebsd,php3,savannah,maven,savannah2,npm,php,phpmyadmin,php2,github,ocamlforge,redhatssh,gentoo,rubygems,fedora,wordpress} to distribute packages with injected malware.
 
-While so far there is no known breach of opam installations (but other package managers have been compromised, see \cite{cabal,maven,npm,rubygems}), there is not much security in place:
-In opam 1.2.2 none of the steps (discover, download, install) includes verification.
-The discover and download steps use https, but pass \texttt{--no-check-certificates} to the download utility \texttt{wget}, which disables certificate verification.
-Any man-in-the-middle between client and repository can arbitrarily modify updates or tarballs.
-The build and install steps may do any modifications to the file system, not limited to the build and target directory of the package.
-In opam 2.0 (not released yet) the download tool verifies the TLS certificates~\cite{opampr} using the system-wide trustchain.
-Nevertheless, a breach of the repository server enables an attacker to modify updates and tarballs arbitrarily.
-The (known weak~\cite{rfc6151}) MD5 digest of source tarballs is stored in the repository as metadata.
-Neither the build recipe nor additional files are checksummed.
+So far there has been no breach of opam detected, but other package managers have been compromised, see \cite{cabal,maven,npm,rubygems}.
+Opam does not provide any security mechanism at any step:
+Discovery in current opam (1.2.2) is done via a https download (for the main opam repository), but the download tool (\texttt{wget}) is used with the \texttt{--no-check-certificates} command line option, disabling any certificate validation.
+Thus, a person-in-the-middle can inject arbitrary metadata (additional patches, modified packages, modified checksums, ...) during the discovery step.
+A package is downloaded using the url specified in the metadata of the package (usually https, again without certificate validation), and checks the recorded MD5 digest (which is known to be weak~\cite{rfc6151}) against the downloaded archive.
+The build step is not contained into a temporary chroot environment, but may modify arbitrary files on disk.
+The recipe for building is part of the metadata, and may also include invoking any shell commands (such as downloading more things).
+The install step may also modify arbitrary files.
 
-In this paper we present \emph{conex}, a system which uses end-to-end digital signatures (the original author signs their package and build instructions, the client verifies this signature) to re-establish trust into opam.
-Using end-to-end signature, the central server hosting the repository does not need to be trusted, neither does the server where the tarballs are downloaded from need to be trusted!
-Conex and opam integrate well, and conex has been designed with opam in mind, but it can be used without opam to publish and update data in a way that it can be authenticated.
-The main opam repository is a git repository hosted on GitHub.
-While conex makes use of GitHub identifiers, it does not depend at all on GitHub, and not even on git.
-Conex can also be used with other public or private opam repositories, only an initial set of trust anchors has to be distributed in a safe manner (e.g. an opam package in the main opam repository).
-The main goal of conex is to provide a secure way to distribute packages.
-Another design goal is to retain the workflow of package authors and opam users.
-Janitors (repository maintainers) need to adapt to a slightly more complex workflow.
+Opam 2.0 is not released yet, but fixes several major concerns:
+downloading now validates the TLS certificates~\cite{opampr} using the system-wide trustchain,
+a wrap command is available for building and installing packages~\cite{wrappr}.
+Nevertheless, a breach of the central server enables an attacker to modify packages arbitrarily.
+Relying only on transport layer security for packages, where many implementations have a long history of security vulnerabilities (e.g. Apple's goto fail), is not optimal.
 
-Conex is implemented in OCaml using only few dependencies (it should be installable without opam), and licensed under the 2-clause BSD license (source~\cite{conex}).
+In this paper we present \emph{conex}, a system which uses end-to-end digital signatures - the original author signs their package and build instructions, the client verifies this signature - to re-establish trust into packages installed by opam.
+Using end-to-end signatures, neither the the server hosting the repository nor the server where the tarballs are downloaded from need to be trusted!
+Conex has been designed with opam in mind, but it can be used without opam to publish and update data in an authenticated way.
+At the moment, the main opam repository is a git repository hosted on GitHub.
+While conex uses GitHub identifiers, it does not depend at all on GitHub (could use EMail addresses instead), and not even on git.
+Conex is not limited to the main opam repository, but can be used with any public or private opam repository, or any other data repository.
+The only requirement is a second channel to distribute an initial set of trust anchors (e.g. an opam package in the main opam repository).
+The main goal of conex is to \emph{establish an authenticated way to distribute packages}.
+Conex is constrained by the current use of the opam repository:  most package authors upload their releases as a pull request, janitors (repository maintainers) merge these after manual and automated (Camelius) feedback (on package name, missing dependencies, build-only dependencies, ...).
+Using conex, most of the burden has to be carried by the janitors.
 
-Earlier work on securing software update systems, such as the update framework~\cite{tuf} and diplomat~\cite{diplomat} focus on distributing directories securely, but make simultaneous updates of several packages by different authors hard, due to centralised files with authorisation and key information).
+Conex is implemented in OCaml using only dependencies of opam (such as cmdliner), and licensed under the 2-clause BSD license (source~\cite{conex}).
+It should be installable at the same time as opam itself to provide authentication from the start.
+
+Earlier work on securing software update systems, such as the update framework (TUF)~\cite{tuf} and Diplomat~\cite{diplomat} focus on distributing directories securely, but make simultaneous updates of several packages by different authors hard, due to centralised files with authorisation and key information.
 Our earlier proposal for opam signing~\cite{opamsigning} adjusted ideas from TUF to the current opam workflow, but introduced superfluous structure.
-Conex still builds on top of tuf and diplomat, but simplifies our original proposal by introducing less structure and being less complex.
 
 In section~\ref{sec:design} we will discuss the design of conex, followed by reasonable shortcuts in section~\ref{sec:shortcuts}.
 Afterwards in section~\ref{sec:implementation} we present the implementation and opam integration.
 We will discuss related in section~\ref{sec:related} and conclude with future work in section~\ref{sec:conclusion}.
 
 \section{Design} \label{sec:design}
-We first take a step back and do not consider all the details of opam for now, but focus on how to distribute a repository in a secure way.
+We first take a step back and do not consider all the details of opam for now.
 
 Conex does not claim to protect against undiscovered vulnerabilities in the packages, dependent tools, or conex itself.
 It is also not a scanner for installed vulnerable packages.
@@ -79,64 +86,64 @@ There are many risks that users of software update systems face, ranging from in
 
 This leads us to consider a threat model where parts of the involved systems are compromised.  We assume that an attacker can:
 \begin{itemize}
-  \item Compromise the central server.
-  \item Respond to user requests (acting as man-in-the-middle).
+  \item Compromise the central server distributing the repository.
+  \item Respond to user requests (acting as person-in-the-middle).
 \end{itemize}
 
 An attack is successful if the attacker can change the contents of a package that a user installs, or preventing a user from updating to the most recent version of a package.
 
-We include signatures and keys in the same repository as the package metadata, this prevents attackers to hinder a user to receive key updates while updating metadata (possibly signed with a just compromised and revoked key).
-We embed a monotonic increasing counter in each piece of data to prevent rollback attacks.
-
-Compromise of (offline!) keys cannot be detected automatically, but requires janitors, authors, and other people to carefully read updates.
-We assume that authors and janitors protect their keys reasonably.
-If a key is compromised, we consider conex security to be effective if the impact is limited to the authorised packages of the compromised key.
-
-Both a snapshot of the repository can be verified using a set of initial trust anchors (public keys of janitors), and an update (patch) to an existing verified repository which leads to a verified repository with the patch applied.
+We cannot detect compromises of (offline!) keys, but this requires janitors, authors, and other people to carefully read through updates.
+We assume that authors and janitors protect their private keys on their computers in a reasonable way, but we also have mechanisms in place for key revocation.
+If a private key is compromised, we consider conex security to be effective if the impact is limited to the authorised packages of the compromised key.
 
 \subsection{Roles}
 There are two roles in conex:
 \begin{itemize}
-  \item An \emph{author} who develops software and releases it into the repository.
+  \item An \emph{author} who develops packages and releases them to the repository.
   \item A \emph{janitor} who keeps the repository tidy and in a working state (fixing up reverse dependencies etc.).  Janitors also maintain the package name and author name resources.
 \end{itemize}
 
-An author signs their own packages, and janitors have to introduce authors and authorise authors for their packages.
-A janitor has more privileges, and is also likely be an author of their packages.
-In section~\ref{sec:shortcuts} we discuss some ways to make conex easier to use, leveraging the security level.
+An author signs their own packages.
+A janitor has to introduce authors, authorise authors for their packages, and also adjust packages due to updated dependencies (such as the version constraints, or minor patches to build on another platform).
+It is likely that a janitor also authors some packages, there is no need for multiple keys in this case.
+In section~\ref{sec:shortcuts} we discuss ways to make conex easier to use, leveraging the security level.
 
-If a single janitor would be able to adjust packages which are missing version constraints (due to new releases of dependencies), revoke or update an author's key, and/or modify the set of janitors, then compromising a single janitor key would be sufficient to maliciously update the repository.
-We avoid this by requiring a quorum of janitors to sign updates.
+If a single janitor would be trusted to tidy up packages, compromising only one janitor key would be sufficient to undermine the security of conex.
+We avoid this by requiring a quorum of janitors to sign hotfixes.
 
 \subsection{Resources}
-The repository contains several resources: package metadata (checksums, build recipes, dependencies), author (public key, id, role) and authorisation (relation between package name and author).
+We distinguish various resources which are all hosted in the same repository:
+package metadata (checksums, build recipe, dependencies), author information (public key, id, role), list of releases (of a single package), and authorisation (relation between package name and author).
 The role field distinguishes janitors and authors.
+For each janitor the repository contains a resource with all resources and checksums, signed by the janitor (to avoid way too many public key operations during sign and verify).
 
 Each resource is only valid if it is signed by either one of the authorised key identifiers, or a quorum of janitors.
 Each resource contains a monotonic counter to prevent rollback attacks.
 
-Packages, identified by their name, and key identifiers, are the names we need to protect against starvation attacks.
+There are two universes of names which we need to protect against squatting attacks (including typographics ones~\cite{typo}): package names and key identifiers.
 Janitors need to faithfully verify new package and public key submissions.
 
-Resource updates are distributed (each author updates their own packages), and should be free of conflicts (conflicts are detected during merge, it is up to the janitors to decide which update should go through, and which should be resubmitted on top of the other).
+Each author updates their own packages, which should be free of conflicts due to separate resources for each package.
+If a conflict is detected, it is up to the janitors to decide which update should go through, and which should be resubmitted on top of the other.
 
 \subsection{Repository layout}
 While conex is not bound to a file system, we'll reuse their terminology.
-The root directory has two subdirectories, \texttt{keys} and \texttt{data}.
+The root directory has three subdirectories, \texttt{keys}, \texttt{sigs} and \texttt{data}.
 
-The \texttt{keys} directory contains one file, named after the key identifier.
-The \texttt{data} directory consists of subdirectories, which each must contain a file \texttt{authorisation} and a file \texttt{index}, plus possibly any subdirectories.
-Each subdirectory must be listed in the \texttt{index} file, and contains a \texttt{checksum} file besides any other data files and directories (all listed in the checksum file).
+The \texttt{keys} directory contains one file for each author, named after the key identifier.
+The \texttt{sigs} directory contains one file for each janitor, named after the janitor key identifier.
+The \texttt{data} directory consists of subdirectories, which each must contain a file \texttt{authorisation} and a file \texttt{releases}, plus possibly any subdirectories.
+Each subdirectory must be listed in the \texttt{releases} file, and must contain a \texttt{checksum} file besides any other data files and directories (all listed in the checksum file).
 
 Each file contains a set of key-value pairs.
 Any key-value representation which can be non-ambiguously normalised into a string, can be used (such as the opam format, json, s-expressions).
 Each file contains a \texttt{signed} structure: \texttt{(signed: }\textbf{resource}\texttt{, sigs: }\textbf{(id, signature) list}\texttt{)}.
-Resources, either a public key, an authorisation, or a checksum, have been mentioned before, and are explained in more detail below.
-The signature is computed over the normalised string representation of the resource concatenated with the public key id (separated by a space character).
+The different resources are explained in more detail below.
+The signature is computed over the normalised string representation of the resource concatenated with the public key id and the resource kind, separated by a space character.
 
 \begin{figure}
-\textbf{id}: 7bit ASCII case sensitive string\\
-\textbf{name}: 7bit ASCII case sensitive string\\
+\textbf{id}: restricted string\\
+\textbf{name}: restricted string\\
 \textbf{signature}: Base64 encoded RSASSA-PSS with SHA256 (PKCS1)\\
 \textbf{public key}: RSA public key ($\geq$ 2048 bit, PKCS1, PEM encoded)\\
 \textbf{role}: \texttt{Janitor} $|$ \texttt{Author} $|$ \texttt{Other} of \textbf{id}\\
@@ -148,14 +155,12 @@ The signature is computed over the normalised string representation of the resou
 \end{figure}
 
 The data types for version 0 of conex are presented in Figure~\ref{fig:datatypes0}.
-Distinction between id and name is only for clarity (ids are the public key ids, where names are the package names), they form two disjoint sets of identifiers.
+A \texttt{restricted string} is a case insensitive 7 bit ASCII string without control characters or special characters.
+Depending on usage, more characters are forbidden (e.g. opam package names may not contain a '.').
+Distinction of id and name is only for clarity (ids are the public key ids, where names are the package names), they form two disjoint sets of identifiers.
 Upon insertion of new identifiers, checks for non-collision and validity need to be done.
-The file formats of keys (Figure~\ref{fig:keyformat}), authorisations (Figure~\ref{fig:authformat}), index (Figure~\ref{fig:indexformat}), and checksums (Figure~\ref{fig:checksumformat}) include a version number (0 for this proposal) and a monotonic counter (starting at 0) each.
-The index is signed by an authorised author, and contains a list of releases of the given package name.
-The list of files in the checksum contains a list of all (recursively) present files in the current directory.
-Files not mentioned in the checksum are not exposed from conex to opam.
-Instead of removing author ids and packages, we put empty placeholders signed by janitors into the repository.
-Otherwise an attacker can remove all the author ids and packages, since there's no signed trace of this change.
+
+Each file includes a data version (0 in this proposal) and a monotonic 64 bit counter (starting at 0).
 
 \begin{figure}
   \centering
@@ -179,6 +184,10 @@ authorised: \textbf{id list}
   \end{minipage}
 \end{figure}
 
+The file format for a public key, presented in Figure~\ref{fig:keyformat}, contains the PEM encoded public key, the identifier (used for signatures and authorisations in opam), accounts in other systems, and its role.
+
+The authorisations file format, shown in Figure~\ref{fig:authformat}, contains the package name and a list of authorised key identifiers for this package.
+
 \begin{figure}
   \centering
   \begin{minipage}{\hsize}
@@ -187,7 +196,7 @@ counter: \textbf{Int64},\\
 version: \textbf{Int64},\\
 name: \textbf{name},\\
 releases: \textbf{name list}
- \caption{\label{fig:indexformat} Index}
+ \caption{\label{fig:releasesformat} Releases}
     \end{minipage}
     \begin{minipage}{.55 \hsize}
 counter: \textbf{Int64},\\
@@ -199,22 +208,44 @@ files: \textbf{(name, byte size, digest) list}
   \end{minipage}
 \end{figure}
 
+The releases file format, shown in Figure~\ref{fig:releasesformat}, contains the package name and the list of all releases of this package.
+It is signed by an authorised author (or a quorum of janitors).
+This is crucial to avoid rollback attacks, where an attacker hinders a client from receiving package updates.
+
+The checksums file format, shown in Figure~\ref{fig:checksumformat}, contains the release name, and a list of file names which are part of the release (opam, url, descr, optionally patches, archive) and their sizes and digests.
+This list must contain all files recursively present in the current directory (excluding the checksum file itself).
+
+\begin{figure}
+  \centering
+counter: \textbf{Int64},\\
+version: \textbf{Int64},\\
+identifier: \textbf{id},\\
+resources: \textbf{(name, kind, digest) list}
+ \caption{\label{fig:janindexformat} Janitor index}
+\end{figure}
+
+The janitor index file format, shown in Figure~\ref{fig:janindexformat}, contains the janitor identifier, and all resources the janitor vouches for.
+
+Instead of removing author ids and packages, we put empty placeholders signed by janitors into the repository.
+
 \subsection{Chain of Trust}
 A package is valid if and only if the chain of trust can be verified.
 All files in the subdirectory are registered in the checksum file, which is signed by either an author (listed in the authorisation file in the parent directory) or a quorum of janitors.
-The subdirectory name must be present in the valid index file of the parent directory.
-The authorisation file itself has to be signed by a quorum of janitors (whose keys need to be in the repository and appropriately signed).
+The subdirectory name must be present in the valid releases file of the parent directory.
+The authorisation file itself has to be signed by a quorum of janitors.
 Public keys have to be signed by a quorum of janitors as well.
 
 To bootstrap the chain, we assume an existing set of janitors (which cardinality is above the quorum).
-The set for the main opam repository is distributed with opam, thus a compromise of opam is fatal (out of scope for conex, need to be authenticated via other means).
+The set for the main opam repository is distributed with opam.
+The initial authenticated opam installation, including the initial set of janitors, is out of scope for conex (requires another package manager, OpenPGP signatures, ...).
 
-\subsection{Snapshot verification}
-Verification of a snapshot is straightforward: take the set of initial janitors as trusted, then iterate through all packages, verify the authorisation file (properly signed by a quorum of janitors), and verify all checksum files.
-The public keys are verified upon demand (whenever a signature is encountered, the key of the signing id is verified).
+\subsection{Verification}
+Both a snapshot of the repository can be verified using a set of initial trust anchors (public keys of janitors), and an update (patch) to an existing verified repository which leads to a verified repository with the patch applied.
 
-\subsection{Update verification}
-Consider that the repository in the old state is verified, use it to verify the update (in form of a patch) in the following way:
+\paragraph{Snapshot verification}  Verification of a snapshot is straightforward: take the set of initial janitors as trusted, then iterate through all packages, verify the authorisation file (properly signed by a quorum of janitors), all releases files, and verify all checksum files.
+The public keys are verified upon demand: whenever a signature is encountered, the key of the signing id is verified.
+
+\paragraph{Update verification}  Consider that the repository in the old state is verified, use it to verify the update (in form of a patch) in the following way:
 \begin{itemize}
   \item key modification -- key is sufficiently big, unique id matching filename, counter is increased, signed by quorum, no signature with old key
   \item key insertion -- key is sufficiently big, unique id matching filename, counter is 0, signed by quorum
@@ -223,67 +254,89 @@ Consider that the repository in the old state is verified, use it to verify the 
   \item authorisation insertion -- counter is 0, id matches directory, signed by quorum, authorised key ids are present
   \item authorisation modification -- counter increasing, all checksum are signed with an authorised key, signed by quorum
   \item complete package removal -- empty authorised, empty releases, signed by quorum
-  \item package insertion -- valid authorisation, index, and checksum, both counter 0, signed by author (authorisation by quorum)
+  \item package insertion -- valid authorisation, releases, and checksum, both counter 0, signed by author (authorisation by quorum)
   \item package update -- valid checksum, counter increasing, signed by author
   \item new package version release -- index counter increasing and new version added to list, valid checksum, signed by author
   \item package version deletion -- counter increasing, removed from releases, signed by author
 \end{itemize}
 
 \subsection{Security Analysis}
-Assuming a man-in-the-middle-attacker between the repository and a user wants to deliver a backdoored package.
-The first step is to insert a backdoor, which can either be done by modifying the source code of a package (either updating the source tarball, preparing a new release, or introducing a separate patch file) in the repository, or introducing a new package and a dependency.
-All these mechanism require either the original author key (or a quorum of janitors).
+%\TODO{from opam signing: When a developer key is stolen, the snapshot key is also needed to target a single user for a malicious patch.}
+%\TODO{still sort of a laundry list}
+
+Package metadata, signatures, and public keys are distributed in the same repository to prevent attackers from hindering one communication link, e.g. the public key one.
+This would otherwise allow a detected attacker who compromised a key to deliver metadata signed with this compromised key.
+
+Each resource includes a monotonically increasing counter to prevent rollback attacks.
+Otherwise, an attacker could replay e.g. an insecure package build recipe.
+Also, each resource includes the name, otherwise the signature of package A would be valid for package B.
+Each signature contains the resource kind to avoid carrying over a signature from one resource to another.
+
+Instead of removing resources to revoke them, the already claimed names stay there.
+The public key, package, or janitor index resource is emptied and must be signed by a quorum of janitors.
+
+A person-in-the-middle attacker could implement a backdoor for a package, but would need to either modify the checksum, prepare a new release, embed the patch as metadata in the repository, or introduce a new package (which they could) and add a dependency.
+All of these actions require either a signature from the original author or from a quorum of janitors.
 Any suspicious behaviour in widely used packages will likely be spotted by the community which reads through the commit logs.
 
 An attacker can freeze a client from updating (by preventing the client to communicate with the repository server), but downgrades of packages are not possible (an update cannot remove packages without appropriate signatures).
 
-Mix and match (providing outdated versions of package A, newer of package B, up-to-date package C) are not mitigated in conex since there is no central list of releases.
-In the next section, we will discuss a timestamping service which mitigates mix and match attacks (and let a user detect freeze attacks).
-
 Conex does not depend on unreliable system time and comparison of timestamps, instead it uses monotonic counters.
-It handles revocation explicitly by retaining the resource in the repository, but leaving the data element (e.g. public key) empty.
 Other systems rely on git signing, which is out-of-tree data and thus an attacker can prevent a user from receiving this data (while still receiving (potentially malicious) updates).
 
 In the case conex cannot verify package metadata, it will not pass this unverified data to opam.
 In case conex cannot verify a downloaded tarball, this will be reported.
 
-The weakest link of security are humans and their computer systems - janitors and authors will have their keys compromised after serving some website or inserting a USB stick.
+Mix-and-match attacks provide e.g. outdated releases of package A and B, up-to-date releases of package C, are not mitigated in conex since there is no central list of releases.
+They can be mitigated by relying on some append-only log, blockchain, or other monotonic updates, such as git without forced pushes.
+We will discuss a timestamp notary in the next section, mitigating both mix-and-match and freeze attacks.
 
 \section{Shortcuts} \label{sec:shortcuts}
-In the presented setup, conex requires verification of at least 8 signatures (3 for the public key, 3 for the authorisation, then index and checksum) per package.
-Valid public key can be cached during processing, leaving the number at 5, which is still too high, especially for embedded systems.
+%\TODO{see also http://bentnib.org/posts/2016-04-12-authenticated-data-structures-as-a-library.html}
 
-In addition, the previously mentioned mix and match and freeze attack are possible.
-To mitigate this, a \emph{timestamp service}, which updates the repository regularly, verifies all patches, and attaches its digital signature to the latest patch (via an git annotated tag over the git commit).
+%In the presented setup, conex requires verification of at least 8 signatures (3 for the public key, 3 for the authorisation, then index and checksum) per package.
+%Valid public key can be cached during processing, leaving the number at 5, which is still too high, especially for embedded systems.
+
+To mitigate mix-and-match attacks, a \emph{timestamp notary}, which updates the repository regularly, verifies all updates, and attaches its digital signature to the latest patch (via an git annotated tag over the git commit).
 The public key of the timestamp service is inside the repository and signed by multiple janitors.
 Clients can, instead of verifying packages and updates independently, trust the timestamp service (or multiple timestamp services).
 This will reduce computational overhead (signature verification are expensive operations on big numbers), and might be worth for embedded devices.
-If there are multiple timestamp services run by different organisations, and its code is well audited, it might be reasonable to use them as default.
-While there is not yet an implementation of a timestamp service, it will likely be implemented as a MirageOS~\cite{mirage} application, thus the trusted code base is small.
+If there are multiple timestamp notaries run by different organisations, and its code is well audited, it might be reasonable to use them as default.
+While there is not yet an implementation of a timestamp notary, it will likely be implemented as a MirageOS~\cite{mirage,nqsb-tls} application, thus the trusted code base is small.
 
 The main opam repository served as an example over the last section, but conex can easily be applied to any other opam repository.
 Initial set of janitors (can be a single element), the quorum (can be one) must be distributed for each other repository.
-Of course, an automated timestamp service can be used for other repositories as well.
-Conex can also securely distribute binary repositories (since OCaml 4.03 it emits reproducible binaries).
+Of course, an automated timestamp notary can be used for other repositories as well.
 
+%\TODO{this is insecure, since an attacker can add themselves to the authorisation file and self-sign it!}
 If the work overhead for janitors turns out too high, we can leverage the system in a way that \emph{neither authorisation nor public keys require a quorum}.
-This will open the system to name squatting attacks, and in a snapshot authorisations cannot be verified that they contain the same information as the original ones, but updates can be verified (and again, we can outsource trust into the timestamping service).
+This will open the system to name squatting attacks for identifiers.
+In a snapshot authorisations cannot be verified anymore, because there is no history to the authorisation.
+Update verification still applies: if we trust the timestamp notaries and use git, janitors don't have to sign public keys and authorisation files.
+
+%that they contain the same information as the original ones, but updates can be verified (and again, we can outsource trust into the timestamping notary).
 
 Another useful automated system will be a \emph{PR bot}, similar to Camelus, which verifies each PR on the main opam repository and reports the results of the update (whether it is valid, how many janitors need to sign, etc.).
 
+Automated systems which build a package and record the (platform-dependent) digests of the resulting binaries can be integrated to sign their results in the repository.
+Since OCaml 4.03 produces reproducible binaries, thus the locally produced binaries can be checked.
+Conex can also serve for binary distribution.
+
 \section{Conex implementation} \label{sec:implementation}
-An early version of conex~\cite{conex} is implemented in OCaml, but not yet released at the time of writing.
+%\TODO{UX: timestamp in signature!}
+
+Conex is work-in-progress~\cite{conex}.
 It does not depend on opam-lib, but instead will be functorised over the data layout (json, opam, s-expression).
-To further minimise the dependencies (installed via opam), the goal is to have a cryptographic module which uses the widely deployed openssl utility for bootstrapping.
+To further minimise the dependencies, the goal is to have a cryptographic module which uses the widely deployed \emph{openssl} utility for bootstrapping.
 
-The timestamp service and other automated tools will use the conex library as a basis.
+The timestamp notary and other automated tools will use the conex library as a basis.
 
-Conex is not yet integrated into opam at all (but some work on opam 2.0 will make integration straightforward).
+Conex is not yet integrated into opam, but some work on opam 2.0, such as compilers-as-packages, will make the integration smooth.
 The idea is to use conex as a separate application which proxies discover and download commands done by opam.
 
-Janitors need more tooling support, especially to sign off quorums.
-The idea is to have a git branch per update requiring a quorum, and the janitors adding their signatures to that branch as separate commits.
-Once the quorum is reached, the branch can be squashed and merged into the repository.
+There is still demand for more tooling support for janitors.
+In order to reach a quorum, individual janitors have to add the digest to their index file.
+Once the quorum is reached, the proposed PR can be merged.
 A queue of updates needing attention (a quorum) will be provided by the tooling.
 
 \section{Related work} \label{sec:related}
@@ -296,11 +349,15 @@ Our security model relies on offline keys which are protected by authors.
 The Haskell signing proposal and implementation does not enforce authors to sign their packages, but instead the repository is signed.
 Thus, the repository server (or key server) needs to be trusted ultimately.
 
+Our original opam signing proposal did not include a list of releases per package, opening up to attacks where the user does not receive a complete list of releases.
+Additionally, the original proposal introduced an unneccessary hierarchy of keys, and complicated the setup.
+It relied on the timestamping notary or to use git as update protocol with appropriate protection of the transport layer.
+
 \section{Conclusion} \label{sec:conclusion}
 We presented conex: securing opam, a software update system, without modifying the current workflows too much.
-The security will be based on offline keys and end-to-end signing of packages.
+The security is based on offline keys and end-to-end signing of packages.
 This removes any central server from the trust chain.
-Attacks, observed in practise, and theoretic from related work, are mitigated by conex.
+Attacks, observed in practise, and theoretic ones in related work, are mitigated by conex.
 
 Future work includes finishing conex, writing more tests, integration into opam, and develop automated services.
 
