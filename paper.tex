@@ -73,7 +73,7 @@ Earlier work on securing software update systems, such as the update framework (
 Our earlier proposal for opam signing~\cite{opamsigning} introduced unnecessary structure and complexity by adjusting TUF to the decentralised opam workflow.
 
 In section~\ref{sec:design} we discuss the design of conex, followed by reasonable shortcuts in section~\ref{sec:shortcuts}.
-Afterwards in section~\ref{sec:implementation} we briefly present the implementation of cones and opam integration.
+Afterwards in section~\ref{sec:implementation} we briefly present the implementation of conex and opam integration.
 Related work is mentioned in section~\ref{sec:related}, we conclude in section~\ref{sec:conclusion}.
 
 \section{Design} \label{sec:design}
@@ -126,7 +126,7 @@ Each resource contains a monotonic counter to prevent rollback attacks.
 There are two universes of names which we need to protect against squatting attacks (including typographic ones~\cite{typo}): package names and key identifiers.
 Janitors need to faithfully verify new package and public key submissions.
 
-Each author updates their own packages, which should be free of conflicts due to separate resources for each package.
+Each author updates their own packages, which should be free of conflicts between concurrent repository updates, due to separate resources for each package.
 % unclear without VC in mind, which is'nt introduced yet: precise ``conflicts between concurrent repository updates'' ?
 If a conflict is detected, it is up to the janitors to decide which update should go through, and which should be resubmitted on top of the other.
 
@@ -142,6 +142,8 @@ Each subdirectory must be listed in the \texttt{releases} file, and must contain
 Each file contains a set of key-value pairs.
 Any key-value representation which can be non-ambiguously normalised into a string, can be used (such as the opam format, json, s-expressions).
 Each file contains a \texttt{signed} structure: \texttt{(signed: }\textbf{resource}\texttt{, sigs: }\textbf{(id, signature) list}\texttt{)}.
+While signatures from authorised authors are done directly on the checksum/release/public key files, each janitor signs only their per-janitor index file.
+This reduces the amount of signature verifications which are done by the client.
 The different resources are explained in more detail below.
 The signature is computed over the normalised string representation of the resource concatenated with the public key id and the resource kind, separated by a space character.
 
@@ -151,7 +153,7 @@ The signature is computed over the normalised string representation of the resou
 \textbf{signature}: Base64 encoded RSASSA-PSS with SHA256 (PKCS1)\\
 \textbf{public key}: RSA public key ($\geq$ 2048 bit, PKCS1, PEM encoded)\\
 \textbf{role}: \texttt{Janitor} $|$ \texttt{Author} $|$ \texttt{Other} of \textbf{id}\\
-\textbf{service}: \texttt{EMail} of \textbf{name} $|$ \texttt{GitHub} of \textbf{name} $|$ \texttt{Other} of \textbf{id} * \textbf{name}\\
+\textbf{service}: \texttt{Email} of \textbf{name} $|$ \texttt{GitHub} of \textbf{name} $|$ \texttt{Other} of \textbf{id} * \textbf{name}\\
 \textbf{digest}: SHA256 digest of file\\
 \textbf{byte size}: size as \textbf{Int64} of file
 \caption{\label{fig:datatypes0}
@@ -159,7 +161,7 @@ The signature is computed over the normalised string representation of the resou
 \end{figure}
 
 The data types for version 0 of conex are presented in Figure~\ref{fig:datatypes0}.
-A \texttt{restricted string} is a case insensitive 7 bit ASCII string without control characters or special characters.
+A \texttt{restricted string} is a case insensitive 7 bit ASCII string without control or white space characters.
 Depending on usage, more characters are forbidden (e.g. opam package names may not contain a '.').
 Distinction of id and name is only for clarity (ids are the public key ids, where names are the package names), they form two disjoint sets of identifiers.
 Upon insertion of new identifiers, checks for non-collision and validity need to be done.
@@ -228,48 +230,75 @@ resources: \textbf{(name, kind, digest) list}
 \end{figure}
 
 The janitor index file format, shown in Figure~\ref{fig:janindexformat}, contains the janitor identifier, and all resources the janitor vouches for.
-
-Instead of removing author ids and packages, we put empty placeholders signed by janitors into the repository.
+It may contain any checksums, even of resources not yet in the repository (but proposed in some pull request).
+This avoids merge conflicts if a janitor wants to vouch for multiple new authors and packages at the same time.
+%\TODO{to avoid conflicts: it may contain checksums of resources not yet in the repository (in this way, multiple PRs may exist, which are merged once quorum is reached, but individual janitors can put the checksums into their index upfront!)}
 
 \subsection{Chain of Trust}
 A package is valid if and only if the chain of trust can be verified.
 All files in the subdirectory are registered in the checksum file, which is signed by either an author (listed in the authorisation file in the parent directory) or a quorum of janitors.
 The subdirectory name must be present in the valid releases file of the parent directory.
 The authorisation file itself has to be signed by a quorum of janitors.
-Public keys have to be signed by a quorum of janitors as well.
+Each public key has to be signed by its private key and a quorum of janitors.
 
 To bootstrap the chain, we assume an existing set of janitors (which cardinality is above the quorum).
 The set for the main opam repository is distributed with opam.
 The opam installation, including the initial set of janitors, is out of scope for conex (e.g. by another package manager, OpenPGP signatures).
 
 \subsection{Verification}
-Both a snapshot of the repository can be verified using a set of initial trust anchors (public keys of janitors), and an update (patch) to an existing verified repository which leads to a verified repository with the patch applied.
+Since these verification steps are done by automated system (see Section~\ref{sec:shortcuts}) as well, verification errors are not expected at the client and treat as fatal.
+The user is informed about the potential security breach, the set of patches are not applied locally, and the user is asked to inform the janitors via email.
+Certainly, the user can try again to update their repository.
 
-\paragraph{Snapshot verification}  Verification of a snapshot is straightforward: take the set of initial janitors as trusted, then iterate through all packages, verify the authorisation file (properly signed by a quorum of janitors), all releases files, and verify all checksum files.
+A client can verify a repository in two ways:
+\begin{itemize}
+  \item a \emph{complete snapshot} of the repository (fresh clone)
+  \item an already verified repository and a list of \emph{updates} which should be applied
+\end{itemize}
+
+We will briefly outline the algorithm for both subsequently.
+
+\paragraph{Snapshot verification}  Verification of a snapshot is straightforward: take the set of initial janitor keys as trusted, verify all janitor index files, iterate over all packages, verify the authorisation file (properly signed by a quorum of janitors), verify all releases files, and verify all checksum files.
+The client also needs to ensure that there are no subdirectories or files which are not listed in the releases or checksum files.
 The public keys are verified upon demand: whenever a signature is encountered, the key of the signing id is verified.
 
-\paragraph{Update verification}  Consider that the repository in the old state is verified, use it to verify the update (in form of a patch) in the following way:
-\begin{itemize}
-  \item key modification -- key is sufficiently big, unique id matching filename, counter is increased, signed by quorum, no signature with old key
-  \item key insertion -- key is sufficiently big, unique id matching filename, counter is 0, signed by quorum
-  \item key deletion -- counter increasing, no signatures with this key, empty string is used to denote no key, signed by quorum
-  \item role modification -- counter increasing, no signature with old role, signed by quorum
-  \item authorisation insertion -- counter is 0, id matches directory, signed by quorum, authorised key ids are present
-  \item authorisation modification -- counter increasing, all checksum are signed with an authorised key, signed by quorum
-  \item complete package removal -- empty authorised, empty releases, signed by quorum
-  \item package insertion -- valid authorisation, releases, and checksum, both counter 0, signed by author (authorisation by quorum)
-  \item package update -- valid checksum, counter increasing, signed by author
-  \item new package version release -- index counter increasing and new version added to list, valid checksum, signed by author
-  \item package version deletion -- counter increasing, removed from releases, signed by author
-\end{itemize}
+\paragraph{Update verification}  The repository is already verified.
+The client uses it to verify each update separately.
+Each modified resource must be signed, either by an authorised author or by a quorum of janitors.
+The counter must start at 0 (upon creation) and increment.
+The file name and identifier must match.
+A key rollover needs to introduce the new key (replacing the old), and sign again all resources which were signed with the old key.
+Removal of resources is done by replacing it with the empty string.
+A new package needs to have an authorisation file and a releases file, both properly signed.
+%% \begin{itemize}
+%%   \item janitor index modification
+%%   \item janitor index creation - counter 0, properly named, signed by janitor
+%%   \item janitor index deletion - counter increasing, properly named, signed by quorum
+%%   \item key modification -- key is sufficiently big, unique id matching filename, counter is increased, signed by quorum, no signature with old key
+%%   \item key insertion -- key is sufficiently big, unique id matching filename, counter is 0, signed by quorum
+%%   \item key deletion -- counter increasing, no signatures with this key, empty string is used to denote no key, signed by quorum
+%%   \item role modification -- counter increasing, no signature with old role, signed by quorum
+%%   \item authorisation insertion -- counter is 0, id matches directory, signed by quorum, authorised key ids are present
+%%   \item authorisation modification -- counter increasing, all checksum are signed with an authorised key, signed by quorum
+%%   \item complete package removal -- empty authorised, empty releases, signed by quorum
+%%   \item package insertion -- valid authorisation, releases, and checksum, both counter 0, signed by author (authorisation by quorum)
+%%   \item package update -- valid checksum, counter increasing, signed by author
+%%   \item new package version release -- index counter increasing and new version added to list, valid checksum, signed by author
+%%   \item package version deletion -- counter increasing, removed from releases, signed by author
+%% \end{itemize}
+
 
 \subsection{Security Analysis}
 %\TODO{from opam signing: When a developer key is stolen, the snapshot key is also needed to target a single user for a malicious patch.}
 %\TODO{still sort of a laundry list}
 
-Package metadata, signatures, and public keys are distributed in the same repository to prevent attackers from hindering one communication link, e.g. the public key one.
-This would otherwise allow a detected attacker who compromised a key to deliver metadata signed with this compromised key.
-% LG: I am not sure I really get your meaning here
+If package metadata and public keys are distributed from different sources, an attacker who compromised a key could hinder a user from receiving the key revocation by preventing communication to the key server.
+This would allow the attacker to continue signing packages with the compromised key and having the user install arbitrary data.
+To avoid this, package metadata, signatures, and public keys are in the same repository.
+%Package metadata, signatures, and public keys are distributed in the same repository to prevent attackers from hindering one communication link, e.g. the public key one.
+%This would otherwise allow a detected attacker who compromised a key to deliver metadata signed with this compromised key.
+%% LG: I am not sure I really get your meaning here
+% HM: hopefully now it is better!?
 
 Each resource includes a monotonically increasing counter to prevent rollback attacks.
 Otherwise, an attacker could replay e.g. an insecure package build recipe.
@@ -356,6 +385,7 @@ Conex uses signatures from package authors to users, removing the demand to trus
 Conex mitigates known practical attacks as well as theoretical ones described in literature.
 
 Future work includes finishing the implementation of conex, integrating it into opam, and develop automated services (timestamp notary, build bot, PR bot).
+A first beta version of conex, including opam integration, is expected to be available for the OCaml workshop 2016.
 
 %\TODO{Acknowledge Joe, Raphael}
 
