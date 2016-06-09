@@ -58,22 +58,24 @@ In this paper we present \emph{conex}, a system which uses end-to-end digital si
 Using end-to-end signatures, neither the the server hosting the repository nor the server where the tarballs are downloaded from need to be trusted!
 Conex has been designed with opam in mind, but it can be used without opam to publish and update data in an authenticated way.
 At the moment, the main opam repository is a git repository hosted on GitHub.
-While conex uses GitHub identifiers, it does not depend at all on GitHub (could use EMail addresses instead), and not even on git.
+Conex, as presented here, uses GitHub identifiers, but it can use email addresses instead.
+Conex does not depend on GitHub, neither on git.
 Conex is not limited to the main opam repository, but can be used with any public or private opam repository, or any other data repository.
 The only requirement is a second channel to distribute an initial set of trust anchors (e.g. an opam package in the main opam repository).
 The main goal of conex is to \emph{establish an authenticated way to distribute packages}.
-Conex is constrained by the current use of the opam repository:  most package authors upload their releases as a pull request, janitors (repository maintainers) merge these after manual and automated (Camelus) feedback (on package name, missing dependencies, build-only dependencies, ...).
+Conex is constrained by the current use of the opam repository:  most package authors release a package and submit a pull request (PR) to the main opam repository on GitHub.
+Afterwards, janitors (repository maintainers) check the PR (good package name, potentially missing dependencies or build-time only dependencies), automated builds are performed by TravisCI, and the automated bot Camelus~\cite{camelus} reports feedback and missing fields.
 Using conex, most of the burden has to be carried by the janitors.
 
-Conex is implemented in OCaml using only dependencies of opam (such as cmdliner), and licensed under the 2-clause BSD license (source~\cite{conex}).
-It should be installable at the same time as opam itself to provide authentication from the start.
+Conex is implemented in OCaml and licensed under the 2-clause BSD license (source~\cite{conex}).
+To provide authenticity from the start, conex should be installed at the same time as opam, thus it is constrained to use few dependencies, and will only depend on cmdliner and opam-lib.
 
 Earlier work on securing software update systems, such as the update framework (TUF)~\cite{tuf} and Diplomat~\cite{diplomat} focus on distributing directories securely, but make simultaneous updates of several packages by different authors hard, due to centralised files with authorisation and key information.
 Our earlier proposal for opam signing~\cite{opamsigning} adjusted ideas from TUF to the current opam workflow, but introduced superfluous structure.
 
 In section~\ref{sec:design} we will discuss the design of conex, followed by reasonable shortcuts in section~\ref{sec:shortcuts}.
 Afterwards in section~\ref{sec:implementation} we present the implementation and opam integration.
-We will discuss related in section~\ref{sec:related} and conclude with future work in section~\ref{sec:conclusion}.
+We will discuss related work in section~\ref{sec:related} and conclude with future work in section~\ref{sec:conclusion}.
 
 \section{Design} \label{sec:design}
 We first take a step back and do not consider all the details of opam for now.
@@ -100,12 +102,12 @@ If a private key is compromised, we consider conex security to be effective if t
 There are two roles in conex:
 \begin{itemize}
   \item An \emph{author} who develops packages and releases them to the repository.
-  \item A \emph{janitor} who keeps the repository tidy and in a working state (fixing up reverse dependencies etc.).  Janitors also maintain the package name and author name resources.
+  \item A \emph{janitor} who keeps the repository tidy and in a working state (fix up reverse dependencies etc.).  Janitors also maintain the package name and author name resources.
 \end{itemize}
 
 An author signs their own packages.
-A janitor has to introduce authors, authorise authors for their packages, and also adjust packages due to updated dependencies (such as the version constraints, or minor patches to build on another platform).
-It is likely that a janitor also authors some packages, there is no need for multiple keys in this case.
+A janitor introduces authors, authorise authors for their packages, and also adjust packages due to updated dependencies (such as the version constraints, or minor patches to build on another platform).
+It is likely that a janitor acts as an author for their packages, there is no need for a janitor to have multiple private keys.
 In section~\ref{sec:shortcuts} we discuss ways to make conex easier to use, leveraging the security level.
 
 If a single janitor would be trusted to tidy up packages, compromising only one janitor key would be sufficient to undermine the security of conex.
@@ -114,7 +116,7 @@ We avoid this by requiring a quorum of janitors to sign hotfixes.
 \subsection{Resources}
 We distinguish various resources which are all hosted in the same repository:
 package metadata (checksums, build recipe, dependencies), author information (public key, id, role), list of releases (of a single package), and authorisation (relation between package name and author).
-The role field distinguishes janitors and authors.
+The distinction between an author and a janitor is done via the role of the author information.
 For each janitor the repository contains a resource with all resources and checksums, signed by the janitor (to avoid way too many public key operations during sign and verify).
 
 Each resource is only valid if it is signed by either one of the authorised key identifiers, or a quorum of janitors.
@@ -349,7 +351,7 @@ Our security model relies on offline keys which are protected by authors.
 The Haskell signing proposal and implementation does not enforce authors to sign their packages, but instead the repository is signed.
 Thus, the repository server (or key server) needs to be trusted ultimately.
 
-Our original opam signing proposal did not include a list of releases per package, opening up to attacks where the user does not receive a complete list of releases.
+Our original opam signing proposal~\cite{opamsigning} did not include a list of releases per package, opening up to attacks where the user does not receive a complete list of releases.
 Additionally, the original proposal introduced an unnecessary hierarchy of keys, and complicated the setup.
 It relied on the timestamping notary or to use git as update protocol with appropriate protection of the transport layer.
 
