@@ -43,16 +43,16 @@ So far there has been no breach of opam detected, but other package managers hav
 Opam does not provide any security mechanism at any step:
 Discovery in current opam (1.2.2) is done via a https download (for the main opam repository), but the download tool (\texttt{wget}) is used with the \texttt{--no-check-certificates} command line option, disabling any certificate validation.
 Thus, a person-in-the-middle can inject arbitrary metadata (additional patches, modified packages, modified checksums, ...) during the discovery step.
-A package is downloaded using the url specified in the metadata of the package (usually https, again without certificate validation), and checks the recorded MD5 digest (which is known to be weak~\cite{rfc6151}) against the downloaded archive.
+A package is downloaded using the URL specified in the metadata of the package (usually https, again without certificate validation), and checks the recorded MD5 digest (which is known to be weak~\cite{rfc6151}) against the downloaded archive.
 The build step is not contained into a temporary chroot environment, but may modify arbitrary files on disk.
 The recipe for building is part of the metadata, and may also include invoking any shell commands (such as downloading more things).
 The install step may also modify arbitrary files.
 
 Opam 2.0 is not released yet, but fixes several major concerns:
-downloading now validates the TLS certificates~\cite{opampr} using the system-wide trustchain,
+downloading now validates the TLS certificates~\cite{opampr} using the system-wide trust anchors,
 a wrap command is available for building and installing packages~\cite{wrappr}.
 Nevertheless, a breach of the central server enables an attacker to modify packages arbitrarily.
-Relying only on transport layer security for packages, where many implementations have a long history of security vulnerabilities (e.g. Apple's goto fail), is not optimal.
+Relying only on transport layer security for packages, where many implementations have a long history of security vulnerabilities (e.g. goto fail), is not optimal.
 
 In this paper we present \emph{conex}, a system which uses end-to-end digital signatures - the original author signs their package and build instructions, the client verifies this signature - to re-establish trust into packages installed by opam.
 Using end-to-end signatures, neither the the server hosting the repository nor the server where the tarballs are downloaded from need to be trusted!
@@ -62,7 +62,7 @@ While conex uses GitHub identifiers, it does not depend at all on GitHub (could 
 Conex is not limited to the main opam repository, but can be used with any public or private opam repository, or any other data repository.
 The only requirement is a second channel to distribute an initial set of trust anchors (e.g. an opam package in the main opam repository).
 The main goal of conex is to \emph{establish an authenticated way to distribute packages}.
-Conex is constrained by the current use of the opam repository:  most package authors upload their releases as a pull request, janitors (repository maintainers) merge these after manual and automated (Camelius) feedback (on package name, missing dependencies, build-only dependencies, ...).
+Conex is constrained by the current use of the opam repository:  most package authors upload their releases as a pull request, janitors (repository maintainers) merge these after manual and automated (Camelus) feedback (on package name, missing dependencies, build-only dependencies, ...).
 Using conex, most of the burden has to be carried by the janitors.
 
 Conex is implemented in OCaml using only dependencies of opam (such as cmdliner), and licensed under the 2-clause BSD license (source~\cite{conex}).
@@ -120,7 +120,7 @@ For each janitor the repository contains a resource with all resources and check
 Each resource is only valid if it is signed by either one of the authorised key identifiers, or a quorum of janitors.
 Each resource contains a monotonic counter to prevent rollback attacks.
 
-There are two universes of names which we need to protect against squatting attacks (including typographics ones~\cite{typo}): package names and key identifiers.
+There are two universes of names which we need to protect against squatting attacks (including typographic ones~\cite{typo}): package names and key identifiers.
 Janitors need to faithfully verify new package and public key submissions.
 
 Each author updates their own packages, which should be free of conflicts due to separate resources for each package.
@@ -350,16 +350,16 @@ The Haskell signing proposal and implementation does not enforce authors to sign
 Thus, the repository server (or key server) needs to be trusted ultimately.
 
 Our original opam signing proposal did not include a list of releases per package, opening up to attacks where the user does not receive a complete list of releases.
-Additionally, the original proposal introduced an unneccessary hierarchy of keys, and complicated the setup.
+Additionally, the original proposal introduced an unnecessary hierarchy of keys, and complicated the setup.
 It relied on the timestamping notary or to use git as update protocol with appropriate protection of the transport layer.
 
 \section{Conclusion} \label{sec:conclusion}
-We presented conex: securing opam, a software update system, without modifying the current workflows too much.
-The security is based on offline keys and end-to-end signing of packages.
-This removes any central server from the trust chain.
-Attacks, observed in practise, and theoretic ones in related work, are mitigated by conex.
+We presented conex, which secures the software update system opam with minor modifications to the current workflow.
+Conex uses end-to-end signatures (from package authors to users) as trust model.
+It removes any trust into a central server.
+Known attacks, observed in practise or described in literaturre, are mitigated sufficiently by conex.
 
-Future work includes finishing conex, writing more tests, integration into opam, and develop automated services.
+Future work includes finishing the implementation of conex, integrating it into opam, and develop automated services (timestamp notary, build bot, PR bot).
 
 \bibliographystyle{acm}
 \bibliography{paper}
