@@ -51,7 +51,7 @@ The install step may also modify arbitrary files.
 
 Opam 2.0 is not released yet, but fixes major concerns:
 downloading validates the TLS certificates~\cite{opampr} using system-wide trust anchors,
-a wrap command is available for building and installing packages~\cite{wrappr}.
+a wrap command is available for building and installing packages~\cite{wrappr}, optionally enabling sandboxing.
 Nevertheless, a breach of the central server enables an attacker to modify packages arbitrarily.
 Relying only on TLS for packages is suboptimal, because many TLS implementations suffer from a long history of security vulnerabilities (e.g. goto fail).
 
@@ -91,6 +91,10 @@ This leads us to consider a threat model where some involved systems are comprom
 
 An attack is successful if the attacker can change the contents of a package that a user installs, or preventing a user from updating to the most recent version of a package.
 
+% LG: What about injecting packages (dependencies) into the user system ? I have
+% \texttt{provides:} in mind, that may enable this without changing the contents
+% of a package
+
 We cannot detect compromises of (offline!) keys, but this requires janitors, authors, and other people to carefully read through updates.
 We assume that authors and janitors protect their private keys on their computers in a reasonable way, but we also have mechanisms in place for key revocation.
 If a private key is compromised, we consider conex security to be effective if the impact is limited to the authorised packages of the compromised key.
@@ -123,13 +127,14 @@ There are two universes of names which we need to protect against squatting atta
 Janitors need to faithfully verify new package and public key submissions.
 
 Each author updates their own packages, which should be free of conflicts due to separate resources for each package.
+% unclear without VC in mind, which is'nt introduced yet: precise ``conflicts between concurrent repository updates'' ?
 If a conflict is detected, it is up to the janitors to decide which update should go through, and which should be resubmitted on top of the other.
 
 \subsection{Repository layout}
 While conex is not bound to a file system, we'll reuse their terminology.
 The root directory has three subdirectories, \texttt{keys}, \texttt{sigs} and \texttt{data}.
 
-The \texttt{keys} directory contains one file for each author, named after the key identifier.
+The \texttt{keys} directory contains one file for each author and janitor, named after the key identifier.
 The \texttt{sigs} directory contains one file for each janitor, named after the janitor key identifier.
 The \texttt{data} directory consists of subdirectories, which each must contain a file \texttt{authorisation} and a file \texttt{releases}, plus possibly any subdirectories.
 Each subdirectory must be listed in the \texttt{releases} file, and must contain a \texttt{checksum} file besides any other data files and directories (all listed in the checksum file).
@@ -264,6 +269,7 @@ The public keys are verified upon demand: whenever a signature is encountered, t
 
 Package metadata, signatures, and public keys are distributed in the same repository to prevent attackers from hindering one communication link, e.g. the public key one.
 This would otherwise allow a detected attacker who compromised a key to deliver metadata signed with this compromised key.
+% LG: I am not sure I really get your meaning here
 
 Each resource includes a monotonically increasing counter to prevent rollback attacks.
 Otherwise, an attacker could replay e.g. an insecure package build recipe.
