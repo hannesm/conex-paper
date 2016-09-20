@@ -44,24 +44,25 @@ So far there has been no breach of opam detected, but other package managers hav
 Opam does not provide any security mechanism at any step:
 Discovery in current opam (1.2.2) is done via a https download (for the main opam repository), but the download tool (\texttt{wget}) is used with the \texttt{--no-check-certificates} command line option, disabling any certificate validation.
 Thus, a person-in-the-middle can inject arbitrary metadata (additional patches, modified packages, modified checksums, ...) during the discovery step.
-A package is downloaded using the URL specified in the metadata of the package (usually https, again without certificate validation), and checks the recorded MD5 digest (which is known to be weak~\cite{rfc6151}) against the downloaded archive.
+A package is downloaded using the URL specified in the metadata of the package (usually a secure channel using https, again without certificate validation), and checks the recorded MD5 digest (which is known to be weak~\cite{rfc6151}) against the downloaded archive.
 The build step is not contained into a temporary chroot environment, but may modify arbitrary files on disk.
-The recipe for building is part of the metadata, and may also include invoking any shell commands (such as downloading more things).
+The recipe for building is part of the metadata, and may also include invoking any shell commands (such as downloading more files and executing those).
 The install step may also modify arbitrary files.
 
 Opam 2.0 is not released yet, but fixes major concerns:
 downloading validates the TLS certificates~\cite{opampr} using system-wide trust anchors,
 a wrap command is available for building and installing packages~\cite{wrappr}, optionally enabling sandboxing.
-Nevertheless, a breach of the central server enables an attacker to modify packages arbitrarily.
-Relying only on TLS for packages is suboptimal, because many TLS implementations suffer from a long history of security vulnerabilities (e.g. goto fail).
+Nevertheless, a breach of the central repository server enables an attacker to modify packages arbitrarily.
+Relying only on TLS for packages is suboptimal, because many TLS implementations suffer from a long history of security vulnerabilities (e.g. goto fail, Heartbleed).
 
-In this paper we present \emph{conex}, a system which uses end-to-end digital signatures - the original author signs their package and build instructions, the client verifies this signature - to re-establish trust into packages installed by opam.
+In this paper we present \emph{conex}, a system which establishes end-to-end digital signatures - the original author signs their package release and build instructions, the client verifies this signature - to re-establish trust into packages installed by opam.
 Using end-to-end signatures, neither the the server hosting the repository nor the server where the tarballs are downloaded from need to be trusted!
 Conex has been designed with opam in mind, but it can be used without opam to publish and update any data in an authenticated way.
 Conex is not limited to the main opam repository, but can be used with any public or private opam repository, or any other data repository.
 The only requirement is a second channel to distribute an initial set of trust anchors (e.g. an opam package in the main opam repository).
 The main goal of conex is to \emph{establish an authenticated way to distribute packages}.
-The main opam repository is a git repository hosted on GitHub.
+
+The main opam repository is currently a git repository hosted on GitHub.
 Conex does not depend on GitHub, or even on git.
 Conex is constrained by the current use of the main opam repository:  most package authors release a package and submit a pull request (PR).
 Janitors (repository maintainers) then check the PR, TravisCI builds it using several OCaml and opam versions, and the automated bot Camelus~\cite{camelus} reports opam inconsistencies.
@@ -95,7 +96,7 @@ An attack is successful if the attacker can change the contents of a package tha
 % \texttt{provides:} in mind, that may enable this without changing the contents
 % of a package
 
-We cannot detect compromises of (offline!) keys, but this requires janitors, authors, and other people to carefully read through updates.
+Conex cannot detect compromises of (offline!) keys.  But if janitors, authors, and other people carefully read through updates of packages, surprising releases will be detected.
 We assume that authors and janitors protect their private keys on their computers in a reasonable way, but we also have mechanisms in place for key revocation.
 If a private key is compromised, we consider conex security to be effective if the impact is limited to the authorised packages of the compromised key.
 
@@ -106,15 +107,15 @@ There are two roles in conex:
   \item A \emph{janitor} who keeps the repository tidy and in a working state (fix up reverse dependencies etc.).  Janitors also maintain the package name and author name resources by signing them.  Authorisations, that an author is responsible for a package, are signed by janitors as well.  Instead of trusting a single janitor to sign these resources, a quorum of signatures of janitors is required to avoid this concentration of power.
 \end{itemize}
 
-It is likely that a janitor acts as an author for their packages, there is no need for a janitor to have multiple private keys.
+A janitor may also act as an author, in case they develop and maintain packages on their own.  There is no need for a janitor to have multiple private keys.
 
 \subsection{Resources}
 We distinguish various resources which are all hosted in the same repository:
-package metadata (checksums, build recipe, dependencies), author information (public key, id, role), list of releases (of a single package), and authorisation (relation between package name and author).
-The distinction between an author and a janitor is done via the role of the author information.
-The repository contains one index per janitor with all resources and checksums the janitor vouches for.
+author information (public key, id), teams (members), package metadata (build recipe, dependencies, url to tarball), list of releases (of a single package), and authorisation (relation between package name and author).
+The repository contains one index per author with all resources and checksums the author vouches for.
+A janitor is a member of the team ``janitors''.
 
-Each resource is only valid if it is signed by either one of the authorised key identifiers, or a quorum of janitors.
+Each resource is only valid if it is signed by either one of the authorised key identifiers (in case of relesaes and package metadata checksums), or a quorum of janitors.
 Each resource contains a monotonic counter to prevent rollback attacks.
 
 There are two universes of names which need to be protected against starvation attacks (and typographic ones~\cite{typo}): package names and key identifiers.
@@ -123,30 +124,29 @@ Janitors need to carefully check new package and public key submissions.
 Each author updates their own packages, which should be free of conflicts between concurrent repository updates, due to separate resources for each package.
 % unclear without VC in mind, which is'nt introduced yet: precise ``conflicts between concurrent repository updates'' ?
 If a conflict is detected, it is up to the janitors to decide which update should go through, and which should be resubmitted on top of the other.
+The main source of conflict is likely team membership addition and deletion.
 
 \subsection{Repository layout}
 Conex is not bound to the file system, but we use their terminology.
-The root directory has three subdirectories, \texttt{keys}, \texttt{sigs} and \texttt{data}.
+The root directory has three subdirectories, \texttt{keys}, \texttt{index} and \texttt{packages}.
 
-The \texttt{keys} directory contains one file for each author and janitor, named after the key identifier.
-The \texttt{sigs} directory contains one file for each janitor, named after the janitor key identifier.
-The \texttt{data} directory consists of subdirectories, which each must contain a file \texttt{authorisation} and a file \texttt{releases}, plus possibly any subdirectories.
+The \texttt{keys} directory contains one file for each author and each team, named after their identifier.
+The \texttt{index} directory contains one index file for each author, named after the key identifier.  This contains a list of resources the author vouches for, and a digital signature.
+The \texttt{packages} directory consists of subdirectories, which each must contain a file \texttt{authorisation} and a file \texttt{releases}, plus possibly any subdirectories.
 Each subdirectory must be listed in the \texttt{releases} file, and must contain a \texttt{checksum} file besides any other data files and directories (all listed in the checksum file).
 
 Each file contains a set of key-value pairs.
 Any key-value representation which can be non-ambiguously normalised into a string, can be used (such as the opam format, json, s-expressions).
-Each file contains a \texttt{signed} structure: \texttt{(signed: }\textbf{resource}\texttt{, sigs: }\textbf{(id, signature) list}\texttt{)}.
-While signatures from authorised authors are done directly on the checksum/release/public key files, each janitor signs only their per-janitor index file.
-This reduces the amount of signature verifications which are done by the client.
+Each index file contains a \texttt{signed} structure: \texttt{(signed: }\textbf{resource}\texttt{, sigs: }\textbf{(id, signature) list}\texttt{)}.
+The amount of public key operations for verification is at most the number of authors of the repository.
 The different resources are explained in more detail below.
-The signature is computed over the normalised string representation of the resource concatenated with the public key id and the resource kind, separated by a space character.
+The signature is computed over the normalised string representation of the resource concatenated with the public key id, separated by a space character.
 
 \begin{figure}[h]
 \textbf{id}: restricted string\\
 \textbf{name}: restricted string\\
 \textbf{signature}: Base64 encoded RSASSA-PSS with SHA256 (PKCS1)\\
 \textbf{public key}: RSA public key ($\geq$ 2048 bit, PKCS1, PEM encoded)\\
-\textbf{role}: \texttt{Janitor} $|$ \texttt{Author} $|$ \texttt{Other} of \textbf{id}\\
 \textbf{service}: \texttt{Email} of \textbf{name} $|$ \texttt{GitHub} of \textbf{name} $|$ \texttt{Other} of \textbf{id} * \textbf{name}\\
 \textbf{digest}: SHA256 digest of file\\
 \textbf{byte size}: size as \textbf{Int64} of file
@@ -157,8 +157,8 @@ The signature is computed over the normalised string representation of the resou
 The data types for version 0 of conex are presented in Figure~\ref{fig:datatypes0}.
 A \texttt{restricted string} is a case insensitive 7 bit ASCII string without control or white space characters.
 Depending on usage, more characters are forbidden (e.g. opam package names may not contain a '.').
-Distinction of id and name is only for clarity (ids are the public key ids, where names are the package names), they form two disjoint sets of identifiers.
-Upon insertion of new identifiers, checks for non-collision and validity need to be done.
+Distinction of id and name is only for clarity (ids are public key identifiers, names are package names), they form two disjoint sets of identifiers.
+Upon insertion of new identifiers, checks for non-collision and validity are done.
 
 Each file includes a data version (0 in this proposal) and a monotonic 64 bit counter (starting at 0).
 
@@ -170,10 +170,25 @@ version: \textbf{Int64},\\
 key: \textbf{public key},\\
 identifier: \textbf{id},\\
 accounts: \textbf{service list},\\
-role: \textbf{role}
  \caption{\label{fig:keyformat} Public key}
     \end{minipage}
     \hspace*{.5cm}
+    \begin{minipage}{.4 \hsize}
+counter: \textbf{Int64},\\
+version: \textbf{Int64},\\
+name: \textbf{id},\\
+members: \textbf{id list}
+ \caption{\label{fig:teamformat} Team}
+    \end{minipage}
+  \end{minipage}
+\end{figure}
+
+The file format for a public key, presented in Figure~\ref{fig:keyformat}, contains the PEM encoded public key, the identifier (used for signatures and authorisations in opam), and accounts in other systems.
+
+A level of indirection is a team, shown in Figure~\ref{fig:teamformat}, which contains a team name and its members.  A package can be owned by public keys and teams.
+
+\begin{figure}[h]
+  \begin{minipage}{\hsize}
     \begin{minipage}{.4 \hsize}
 counter: \textbf{Int64},\\
 version: \textbf{Int64},\\
@@ -181,51 +196,49 @@ name: \textbf{name},\\
 authorised: \textbf{id list}
  \caption{\label{fig:authformat} Authorisation}
     \end{minipage}
-  \end{minipage}
-\end{figure}
-
-The file format for a public key, presented in Figure~\ref{fig:keyformat}, contains the PEM encoded public key, the identifier (used for signatures and authorisations in opam), accounts in other systems, and its role.
-
-The authorisations file format, shown in Figure~\ref{fig:authformat}, contains the package name and a list of authorised key identifiers for this package.
-
-\begin{figure}[h]
-  \begin{minipage}{\hsize}
-    \begin{minipage}{.3 \hsize}
+    \hspace*{.5cm}
+    \begin{minipage}{.4 \hsize}
 counter: \textbf{Int64},\\
 version: \textbf{Int64},\\
 name: \textbf{name},\\
 releases: \textbf{name list}
  \caption{\label{fig:releasesformat} Releases}
     \end{minipage}
-    \hspace*{.5cm}
-    \begin{minipage}{.55 \hsize}
-counter: \textbf{Int64},\\
-version: \textbf{Int64},\\
-name: \textbf{name},\\
-files: \textbf{(name, byte size, digest) list}
- \caption{\label{fig:checksumformat} Checksum}
-    \end{minipage}
   \end{minipage}
 \end{figure}
 
-The releases file format (Figure~\ref{fig:releasesformat}) contains the package name and a list of all releases.
-It is signed by an authorised author or a quorum.
-This is crucial to avoid rollback attacks, where an attacker hinders a client from receiving package updates.
+The authorisations file format, shown in Figure~\ref{fig:authformat}, contains the package name and a list of authorised identifiers, either refering to public keys or teams.
 
-The checksums file format, shown in Figure~\ref{fig:checksumformat}, contains the release name, and a list of file names which are part of the release (opam, optionally patches, archive, ...), their sizes and digests.
-This list must contain all files recursively present in the current directory (excluding the checksum file).
+Each releases file (Figure~\ref{fig:releasesformat}) contains the package name and a list of all releases.
+The purpose is to avoid rollback attacks on an individual package.
+It is signed by an authorised author or a quorum of janitors.
 
 \begin{figure}[h]
+  \begin{minipage}{\hsize}
+    \begin{minipage}{.4 \hsize}
+counter: \textbf{Int64},\\
+version: \textbf{Int64},\\
+name: \textbf{name},\\
+files: \textbf{(name, size, digest) list}
+ \caption{\label{fig:checksumformat} Checksum}
+    \end{minipage}
+    \hspace*{.5cm}
+    \begin{minipage}{.4 \hsize}
 counter: \textbf{Int64},\\
 version: \textbf{Int64},\\
 identifier: \textbf{id},\\
 resources: \textbf{(name, kind, digest) list}
- \caption{\label{fig:janindexformat} Janitor index}
+ \caption{\label{fig:janindexformat} Index}
+    \end{minipage}
+  \end{minipage}
 \end{figure}
 
-The janitor index file format, shown in Figure~\ref{fig:janindexformat}, contains the janitor identifier, and all resources the janitor vouches for.
+The checksums file format, shown in Figure~\ref{fig:checksumformat}, contains the release name, and a list of file names which are part of the release (opam, optionally patches, ...), their sizes and digests.
+This list must contain all files recursively present in the current directory (excluding the checksum file).
+
+The index file format, shown in Figure~\ref{fig:janindexformat}, contains the identifier, and all resources the author vouches for.
 It may contain any checksums, even of resources not yet in the repository (but proposed in some pull request).
-This avoids merge conflicts if a janitor wants to vouch for multiple new authors and packages at the same time.
+This avoids merge conflicts if an author wants to vouch for multiple versions of the same resources at the same time.
 %\TODO{to avoid conflicts: it may contain checksums of resources not yet in the repository (in this way, multiple PRs may exist, which are merged once quorum is reached, but individual janitors can put the checksums into their index upfront!)}
 
 \subsection{Chain of Trust}
@@ -247,16 +260,16 @@ Certainly, the user can try again to update their repository.
 A client can verify a repository in two ways:
 \begin{itemize}
   \item a \emph{complete snapshot} of the repository (fresh clone)
-  \item an already verified repository and a list of \emph{updates} which should be applied
+  \item an already verified repository and a list of \emph{updates} (in the form of patches) which should be applied
 \end{itemize}
 
 We will briefly outline the algorithm for both subsequently.
 
-\paragraph{Snapshot verification}  Verification of a snapshot is straightforward: take the set of initial janitor keys as trusted, verify all janitor index files, iterate over all packages, verify the authorisation file (properly signed by a quorum of janitors), verify all releases files, and verify all checksum files.
+\paragraph{Snapshot verification}  Verification of a snapshot is straightforward: take the set of initial janitor keys as trusted, verify all index files from this set, verify the janitors team, iterate over all packages, verify the authorisation file (properly signed by a quorum of janitors), verify all releases files, and verify all checksum files.
 The client also needs to ensure that there are no subdirectories or files which are not listed in the releases or checksum files.
 The public keys are verified upon demand: whenever a signature is encountered, the key of the signing id is verified.
 
-\paragraph{Update verification}  The repository is already verified.
+\paragraph{Update verification}  The repository on disk is already verified.
 The client uses it to verify each update separately.
 Each modified resource must be signed, either by an authorised author or by a quorum of janitors.
 The counter must start at 0 (upon creation) and increment.
@@ -353,7 +366,7 @@ Conex can also serve for binary distribution.
 %\TODO{UX: timestamp in signature!}
 
 Conex is work-in-progress~\cite{conex}.
-It will be functorised over the data layout (json, opam, s-expression), and over a cryptography provider.
+It will be abstracted over the data layout (json, opam, s-expression), and over a cryptography provider.
 One provider will be nocrypto, another the \emph{openssl} utility, enabling bootstrapping without opam.
 The timestamp notary and other automated tools will use the conex library.
 
@@ -373,6 +386,8 @@ The Haskell signing proposal does not enforce authors to sign their packages, bu
 Our original opam signing proposal~\cite{opamsigning} did not include a list of releases per package, opening up to various attacks.
 Additionally, our original proposal introduced an unnecessary hierarchical structure.
 It relied on the timestamping notary or using git as update protocol with appropriate protection of the transport layer.
+
+%Conex can also be viewed as a verified append-only log, similar to a blockchain.  Further research is needed to 
 
 \section{Conclusion} \label{sec:conclusion}
 We presented conex, which secures the software update system opam with minor modifications to the current workflow.
