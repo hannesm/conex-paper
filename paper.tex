@@ -60,7 +60,7 @@ In this paper we present \emph{conex}, a system which establishes digital signat
 Neither the the server hosting the repository nor the server where the tarballs are downloaded from need to be trusted!
 Conex has been designed with opam in mind, but it can be used without opam to publish and update any data in an authenticated way.
 Conex is not limited to the main opam repository, it can be used with any public or private opam repository.
-The only requirement is a second channel to distribute an initial set of trust anchors (e.g. an opam package in the main opam repository).
+The only requirement is a second channel to distribute an initial set of trust anchors.
 The main goal of conex is to \emph{establish an authenticated way to distribute packages}.
 
 The main opam repository is currently a git repository hosted on GitHub.
@@ -343,6 +343,8 @@ Mix-and-match attacks provide e.g. outdated releases of package A and B, up-to-d
 They can be mitigated by relying on some append-only log, blockchain, or other monotonic updates, such as git without forced pushes.
 We will discuss a timestamping service in the next section, mitigating both mix-and-match and freeze attacks.
 
+If a quorum of janitor keys is compromised, new trust anchors have to be generated and distributed.
+
 \section{Timestamping Service} \label{sec:shortcuts}
 %\TODO{see also http://bentnib.org/posts/2016-04-12-authenticated-data-structures-as-a-library.html}
 
@@ -350,7 +352,7 @@ We will discuss a timestamping service in the next section, mitigating both mix-
 %Valid public key can be cached during processing, leaving the number at 5, which is still too high, especially for embedded systems.
 
 To mitigate mix-and-match attacks, a \emph{timestamp service}, which updates the repository regularly, verifies all updates, and attaches its digital signature to the latest patch.
-The public key of the timestamp service is part of the repository and signed by multiple janitors.
+The public key of the timestamp service can be part of the repository and signed by multiple janitors, or supplied via another channel (for private timestamp services).
 If there are multiple instances of a timestamp service run by different organisations, and its code is well audited, it might be reasonable to only verify their signatures, and trust it to verify all author signatures.
 While there is not yet an implementation of a timestamp service, it will likely be implemented as a MirageOS~\cite{mirage,nqsb-tls} application, thus the trusted code base is small.
 
